@@ -27,6 +27,7 @@ import (
 	"kubevirt.io/kubevirt/pkg/handler-launcher-com/notify/info"
 	notifyv1 "kubevirt.io/kubevirt/pkg/handler-launcher-com/notify/v1"
 	grpcutil "kubevirt.io/kubevirt/pkg/util/net/grpc"
+	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap"
 	agentpoller "kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/agent-poller"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/cli"
@@ -583,7 +584,7 @@ func (n *Notifier) Close() {
 
 }
 
-func (n *Notifier) StartCloudHvDomainNotifier(eventMonitorConn net.Conn, domain *api.Domain) error {
+func (n *Notifier) StartCloudHvDomainNotifier(eventMonitorConn net.Conn, domain *virtwrap.DomainWrap) error {
 	go func() {
 		type CloudHvEvent struct {
 			Source, Event string
@@ -608,21 +609,29 @@ func (n *Notifier) StartCloudHvDomainNotifier(eventMonitorConn net.Conn, domain 
 			case "vm":
 				switch event.Event {
 				case "booted":
-					domain.Status.Status = api.Running
-					domain.Status.Reason = api.ReasonUnknown
-					watchEvent = watch.Event{Type: watch.Added, Object: domain}
+					domain.Lock()
+					domain.Domain.Status.Status = api.Running
+					domain.Domain.Status.Reason = api.ReasonUnknown
+					watchEvent = watch.Event{Type: watch.Added, Object: domain.Domain}
+					domain.Unlock()
 				case "paused":
-					domain.Status.Status = api.Paused
-					domain.Status.Reason = api.ReasonPausedUser
-					watchEvent = watch.Event{Type: watch.Modified, Object: domain}
+					domain.Lock()
+					domain.Domain.Status.Status = api.Paused
+					domain.Domain.Status.Reason = api.ReasonPausedUser
+					watchEvent = watch.Event{Type: watch.Modified, Object: domain.Domain}
+					domain.Unlock()
 				case "resumed":
-					domain.Status.Status = api.Running
-					domain.Status.Reason = api.ReasonUnknown
-					watchEvent = watch.Event{Type: watch.Modified, Object: domain}
+					domain.Lock()
+					domain.Domain.Status.Status = api.Running
+					domain.Domain.Status.Reason = api.ReasonUnknown
+					watchEvent = watch.Event{Type: watch.Modified, Object: domain.Domain}
+					domain.Unlock()
 				case "shutdown":
-					domain.Status.Status = api.Shutdown
-					domain.Status.Reason = api.ReasonUnknown
-					watchEvent = watch.Event{Type: watch.Deleted, Object: domain}
+					domain.Lock()
+					domain.Domain.Status.Status = api.Shutdown
+					domain.Domain.Status.Reason = api.ReasonUnknown
+					watchEvent = watch.Event{Type: watch.Deleted, Object: domain.Domain}
+					domain.Unlock()
 				default:
 					continue
 				}

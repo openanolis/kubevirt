@@ -60,8 +60,13 @@ type CloudHvDomainManager struct {
 	client               *openapiClient.DefaultApiService
 	vmConfig             openapiClient.VmConfig
 	ephemeralDiskCreator ephemeraldisk.EphemeralDiskCreatorInterface
-	started              bool
-	domain               *api.Domain
+	starting             bool
+	domain               DomainWrap
+}
+
+type DomainWrap struct {
+	sync.Mutex
+	Domain *api.Domain
 }
 
 func NewCloudHvDomainManager(apiSocketPath, ephemeralDiskDir, efiDir string, ephemeralDiskCreator ephemeraldisk.EphemeralDiskCreatorInterface) (*CloudHvDomainManager, error) {
@@ -91,8 +96,10 @@ func newCloudHvDomainManager(apiSocketPath, ephemeralDiskDir, efiDir string, eph
 			},
 		},
 		ephemeralDiskCreator: ephemeralDiskCreator,
-		started:              false,
-		domain:               &api.Domain{},
+		starting:             false,
+		domain: DomainWrap{
+			Domain: &api.Domain{},
+		},
 	}, nil
 }
 
@@ -132,24 +139,37 @@ func (c *CloudHvDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, allowEmul
 	// As a first step, let's implement this function to create and boot a
 	// VM if it's not running yet. We can add more advanced machine state
 	// handling later.
-
 	// Convert the VMI definition into a Cloud Hypervisor configuration.
 	vmConfig := c.vmConfig
 	if err := converter.ConvertVirtualMachineInstanceToVmConfig(vmi, &vmConfig); err != nil {
 		return nil, err
 	}
 
-	if !vmi.IsRunning() && !vmi.IsFinal() && !c.started {
-		c.domain.ObjectMeta.Name = vmi.ObjectMeta.Name
-		c.domain.ObjectMeta.Namespace = vmi.ObjectMeta.Namespace
-		c.domain.ObjectMeta.UID = vmi.UID
-		c.domain.Spec.Metadata.KubeVirt.UID = vmi.UID
-		c.domain.Spec.Name = api.VMINamespaceKeyFunc(vmi)
+	if !vmi.IsRunning() && !vmi.IsFinal() && !c.starting {
+		c.domain.Lock()
+		log.Log.Infof("create and boot: stated: %v, vmi: %v, domain: %v", c.starting, vmi.Status.Phase, c.domain.Domain.Status)
+		c.domain.Unlock()
+		c.starting = true
+		var err error
+		defer func() {
+			if err != nil {
+				log.Log.Errorf("create and boot %s fail: %v", vmi.Name, err)
+				c.starting = false
+			}
+		}()
+
+		c.domain.Lock()
+		c.domain.Domain.ObjectMeta.Name = vmi.ObjectMeta.Name
+		c.domain.Domain.ObjectMeta.Namespace = vmi.ObjectMeta.Namespace
+		c.domain.Domain.ObjectMeta.UID = vmi.UID
+		c.domain.Domain.Spec.Metadata.KubeVirt.UID = vmi.UID
+		c.domain.Domain.Spec.Name = api.VMINamespaceKeyFunc(vmi)
+		c.domain.Unlock()
 
 		c.vmConfig = vmConfig
 
 		// Run pre-start hooks
-		if err := c.preStartHook(vmi); err != nil {
+		if err = c.preStartHook(vmi); err != nil {
 			return nil, err
 		}
 
@@ -179,16 +199,17 @@ func (c *CloudHvDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, allowEmul
 			return nil, fmt.Errorf("Failed booting the VM: %s", resp.Status)
 		}
 
-		c.started = true
-		c.domain.Status.Status = api.Running
+		c.domain.Lock()
+		c.domain.Domain.Status.Status = api.Running
+		c.domain.Unlock()
 
 		// Run post-start hooks
-		if err := c.postStartHook(vmi); err != nil {
+		if err = c.postStartHook(vmi); err != nil {
 			return nil, err
 		}
 	}
 
-	return &c.domain.Spec, nil
+	return &c.domain.Domain.Spec, nil
 }
 
 func (c *CloudHvDomainManager) MemoryDump(vmi *v1.VirtualMachineInstance, dumpPath string) error {
@@ -210,7 +231,9 @@ func (c *CloudHvDomainManager) PauseVMI(vmi *v1.VirtualMachineInstance) error {
 		return fmt.Errorf("Failed pausing the VM: %s", resp.Status)
 	}
 
-	c.domain.Status.Status = api.Paused
+	c.domain.Lock()
+	c.domain.Domain.Status.Status = api.Paused
+	c.domain.Unlock()
 
 	return nil
 }
@@ -227,7 +250,9 @@ func (c *CloudHvDomainManager) UnpauseVMI(vmi *v1.VirtualMachineInstance) error 
 		return fmt.Errorf("Failed unpausing the VM: %s", resp.Status)
 	}
 
-	c.domain.Status.Status = api.Running
+	c.domain.Lock()
+	c.domain.Domain.Status.Status = api.Running
+	c.domain.Unlock()
 
 	return nil
 }
@@ -275,7 +300,9 @@ func (c *CloudHvDomainManager) KillVMI(vmi *v1.VirtualMachineInstance) error {
 		return fmt.Errorf("Failed killing the VM: %s", resp.Status)
 	}
 
-	c.domain.Status.Status = api.Shutdown
+	c.domain.Lock()
+	c.domain.Domain.Status.Status = api.Shutdown
+	c.domain.Unlock()
 
 	return nil
 }
@@ -300,13 +327,15 @@ func (c *CloudHvDomainManager) DeleteVMI(vmi *v1.VirtualMachineInstance) error {
 		return fmt.Errorf("Failed terminating the VMM: %s", resp.Status)
 	}
 
-	c.domain.Status.Status = api.NoState
+	c.domain.Lock()
+	c.domain.Domain.Status.Status = api.NoState
+	c.domain.Unlock()
 
 	return nil
 }
 
 func (c *CloudHvDomainManager) ListAllDomains() ([]*api.Domain, error) {
-	return []*api.Domain{c.domain}, nil
+	return []*api.Domain{c.domain.Domain}, nil
 }
 
 func (c *CloudHvDomainManager) GetDomainStats() ([]*stats.DomainStats, error) {
@@ -486,8 +515,8 @@ func (c *CloudHvDomainManager) postStartHook(vmi *v1.VirtualMachineInstance) err
 	return nil
 }
 
-func (c *CloudHvDomainManager) GetDomain() *api.Domain {
-	return c.domain
+func (c *CloudHvDomainManager) GetDomain() *DomainWrap {
+	return &c.domain
 }
 
 func (c *CloudHvDomainManager) PrepareNetwork(vmi *v1.VirtualMachineInstance) error {
