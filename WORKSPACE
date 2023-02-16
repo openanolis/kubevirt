@@ -394,16 +394,16 @@ http_file(
     downloaded_file_path = "cloud-hypervisor",
     executable = True,
     urls = [
-        "https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v28.1/cloud-hypervisor-static",
+        "https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v28.2/cloud-hypervisor-static",
     ],
 )
 
 http_file(
     name = "cloudhv_fw",
     downloaded_file_path = "CLOUDHV.fd",
-    sha256 = "1a63f023ddf0ccdb076bf74f7d470cefd9969bacddaae06176073cf044f9e1e4",
+    sha256 = "035cab6c081767fc0e4773e40abfce798e8d5168cd4421f938bbd2e3b62dadd8",
     urls = [
-        "https://github.com/cloud-hypervisor/edk2/releases/download/ch-c1166d5c36/CLOUDHV.fd",
+        "https://github.com/cloud-hypervisor/edk2/releases/download/ch-92c79b2901/CLOUDHV.fd",
     ],
 )
 
