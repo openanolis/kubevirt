@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -68,8 +69,17 @@ func (l *VmmWrapper) StartCloudHv(stopChan chan struct{}) (err error) {
 	args := []string{
 		"--api-socket", l.apiSocketPath,
 		"--event-monitor", fmt.Sprintf("fd=%d", fds[1]),
-		"-vv",
 	}
+	if verbosityStr, ok := os.LookupEnv("VIRT_LAUNCHER_LOG_VERBOSITY"); ok {
+		if verbosity, err := strconv.Atoi(verbosityStr); err == nil {
+			if verbosity > 5 {
+				args = append(args, "-vv")
+			} else if verbosity > 2 {
+				args = append(args, "-v")
+			}
+		}
+	}
+
 	cmd := exec.Command(chPath, args...)
 	if l.user != 0 {
 		log.Log.Infof("Non root user (%d) => applying specific caps", l.user)
