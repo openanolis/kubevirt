@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"kubevirt.io/client-go/log"
@@ -60,7 +61,7 @@ type CloudHvDomainManager struct {
 	client               *openapiClient.DefaultApiService
 	vmConfig             openapiClient.VmConfig
 	ephemeralDiskCreator ephemeraldisk.EphemeralDiskCreatorInterface
-	starting             bool
+	starting             uint32
 	domain               DomainWrap
 }
 
@@ -96,7 +97,7 @@ func newCloudHvDomainManager(apiSocketPath, ephemeralDiskDir, efiDir string, eph
 			},
 		},
 		ephemeralDiskCreator: ephemeralDiskCreator,
-		starting:             false,
+		starting:             0,
 		domain: DomainWrap{
 			Domain: &api.Domain{},
 		},
@@ -145,16 +146,16 @@ func (c *CloudHvDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, allowEmul
 		return nil, err
 	}
 
-	if !vmi.IsRunning() && !vmi.IsFinal() && !c.starting {
+	if !vmi.IsRunning() && !vmi.IsFinal() && atomic.LoadUint32(&c.starting) == 0 {
 		c.domain.Lock()
-		log.Log.Infof("create and boot: stated: %v, vmi: %v, domain: %v", c.starting, vmi.Status.Phase, c.domain.Domain.Status)
+		log.Log.Infof("create and boot, vmi: %v, domain: %v", vmi.Status.Phase, c.domain.Domain.Status)
 		c.domain.Unlock()
-		c.starting = true
+		atomic.StoreUint32(&c.starting, 1)
 		var err error
 		defer func() {
 			if err != nil {
 				log.Log.Errorf("create and boot %s fail: %v", vmi.Name, err)
-				c.starting = false
+				atomic.StoreUint32(&c.starting, 0)
 			}
 		}()
 
