@@ -626,7 +626,7 @@ func (n *Notifier) StartCloudHvDomainNotifier(eventMonitorConn net.Conn, domain 
 					domain.Domain.Status.Reason = api.ReasonUnknown
 					watchEvent = watch.Event{Type: watch.Modified, Object: domain.Domain}
 					domain.Unlock()
-				case "shutdown":
+				case "deleted":
 					domain.Lock()
 					domain.Domain.Status.Status = api.Shutdown
 					domain.Domain.Status.Reason = api.ReasonUnknown
